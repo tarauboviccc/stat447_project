@@ -1,5 +1,3 @@
-online_retail <- original_retail_data
-
 # required libraries
 library(dplyr)
 library(tidyverse)
@@ -9,116 +7,85 @@ library(corrplot)
 library(tidyr)
 library(pheatmap)
 
+# Exploratory Data Analysis (EDA)
 
-# EDA
+# for testing purposes loading original retail data when needed
+online_retail <- original_retail_data
 glimpse(online_retail)
 
-# data structures of each column
+# looking into data structures of each column
 str(online_retail)
 
-# analyzing missing values
+# analyzing missing values & addressing
 colSums(is.na(online_retail))
 
-# converting InvoiceDate to datetime
+# converting InvoiceDate to format: year - month - day
 online_retail <- online_retail %>%
   mutate(InvoiceDate = ymd_hms(InvoiceDate))
 
-# removing rows with missing Customer ID
+# removing rows with missing Customer ID & addressing in paper
 online_retail <- online_retail %>%
   filter(!is.na(CustomerID))
 
-# save data with Quantity < 0 (returns)
+# save data with Quantity < 0 (returns transactions) in other object for further analysis 
 negative_quantity <- online_retail %>%
   filter(Quantity < 0)
 
-# save data with UnitPrice < 0 (data errors)
+# save data with Unit Price < 0 (data errors)
 negative_unit_price <- online_retail %>%
   filter(UnitPrice < 0)
 
-# remove returns transactions (Quantity < 0) as well as the data errors (UnitPrice < 0)
+# remove returns transactions (Quantity < 0) as well as the data errors (Unit Price < 0)
+# note: all transactions with Unit Price < 0 were removed once invalid CustomerIDs were removed
 online_retail <- online_retail %>%
   filter(Quantity > 0, UnitPrice > 0)
 
-# adding total revenue column and extract month, day, etc., from the date for EDA.
+# adding total revenue column and extracting date into year-month, and date columns for later on time series analysis
 online_retail <- online_retail %>%
-  mutate(
-    TotalRevenue = Quantity * UnitPrice,
-    InvoiceMonth = format(InvoiceDate, "%Y-%m"),
-    InvoiceDateOnly = as.Date(InvoiceDate)
-  )
+  mutate(TotalRevenue = Quantity * UnitPrice,
+         InvoiceMonth = format(InvoiceDate, "%Y-%m"),
+         InvoiceDateOnly = as.Date(InvoiceDate))
 
-# Descriptive Statistics
+# Descriptive Statistics Part
 
-# number of unique customers, products, and invoices
-online_retail %>%
-  summarise(
-    n_customers = n_distinct(CustomerID),
-    n_products = n_distinct(StockCode),
-    n_invoices = n_distinct(InvoiceNo)
-  )
+# looking into unique customers, products, and invoices numbers
+online_retail %>% summarise(n_customers = n_distinct(CustomerID),
+                           n_products = n_distinct(StockCode),
+                           n_invoices = n_distinct(InvoiceNo))
 
-# Top 10 most frequently purchased products
-online_retail %>%
-  count(Description, sort = TRUE) %>%
+# top 10 most frequently purchased products
+online_retail %>% count(StockCode, sort = TRUE) %>%
   slice_max(n, n = 10)
 
-# top 10 most selling product codes
-online_retail %>%
-  count(StockCode, sort = TRUE) %>%
-  slice_max(n, n = 10)
-
-# show both
-top_products <- online_retail %>%
-  count(StockCode, sort = TRUE) %>%
+# show descriptions of top 10 purchased products
+top_products <- online_retail %>% count(StockCode, sort = TRUE) %>%
   slice_max(n, n = 10) %>%
   left_join(online_retail %>% select(StockCode, Description) %>% distinct(), by = "StockCode")
 
-# Monthly revenue trend
+# looking into monthly revenue trend
 monthly_revenue <- online_retail %>%
   group_by(InvoiceMonth) %>%
   summarise(monthly_revenue = sum(TotalRevenue, na.rm = TRUE))
 
+# visualizing monthly revenue over time
 ggplot(monthly_revenue, aes(x = as.Date(paste0(InvoiceMonth, "-01")), y = monthly_revenue)) +
   geom_line(color = "#0072B2", size = 1) +
-  labs(
-    title = "Monthly Revenue Trend",
-    x = "Month",
-    y = "Revenue (£)"
-  ) +
+  labs(title = "Monthly Revenue Trend", x = "Month", y = "Revenue (£)") +
   theme_minimal()
 
-# outlier analysis
+# analyzing outliers & compressing Quantity var with log scale to display very large values
 ggplot(online_retail, aes(x = Quantity)) +
-  geom_histogram(bins = 100, fill = "skyblue", color = "black") +
+  geom_histogram(fill = "skyblue", color = "black") +
   scale_x_log10() +
   ggtitle("Distribution of Quantity Variable")
 
 ggplot(online_retail, aes(x = UnitPrice)) +
-  geom_histogram(bins = 100, fill = "salmon", color = "black") +
+  geom_histogram(fill = "salmon", color = "black") +
   scale_x_log10() +
   ggtitle("Distribution of Unit Price Variable")
 
-# new variable CustomerFrequency - looking into how often each customer purchases
-customer_frequency <- online_retail %>%
-  group_by(CustomerID) %>%
-  summarise(
-    n_purchases = n_distinct(InvoiceNo),  # Count of unique invoices per customer
-    total_quantity = sum(Quantity),  # Total quantity purchased by the customer
-    total_spent = sum(TotalRevenue)  # Total revenue spent by the customer
-  )
-
-# customer purchase frequency distribution
-ggplot(customer_frequency, aes(x = reorder(as.factor(CustomerID), -n_purchases), y = n_purchases)) +
-  geom_bar(stat = "identity", fill = "#56B4E9") +
-  labs(
-    title = "Number of Purchases per Customer",
-    x = "Customer ID",
-    y = "Number of Purchases"
-  ) +
-  theme_minimal() +
-  theme(axis.text.x = element_blank())  # hides customer IDs for readability
-
 # creating ProductCategory variable using the keywords in the Description variable
+# assistance from ChatGPT for recognizing keywords for each category cause it would take too long otherwise!
 online_retail <- online_retail %>%
   mutate(ProductCategory = case_when(
     grepl("bag|jumbo shopper|lunch box|wallet|purse|tote|mini case|travel kit", Description, ignore.case = TRUE) ~ "Bags & Accessories",
@@ -141,91 +108,89 @@ online_retail <- online_retail %>%
     TRUE ~ "Other"
   ))
 
-online_retail %>% count(ProductCategory, sort = TRUE)
+# looking into distribution of new ProductCategory variable
+online_retail %>% 
+  count(ProductCategory, sort = TRUE)
 
-# distributions of new ProductCategory values
+# visualizing this distribution
 ggplot(online_retail, aes(x = ProductCategory)) + 
-  geom_bar(fill = "skyblue", color = "black") +
+  geom_bar(aes(fill = as.factor(ProductCategory)), color = "black") +
   theme_minimal() +
-  labs(title = "Distribution of Products Across Categories",
+  labs(title = "Distribution of Products Categories",
        x = "Product Category",
        y = "Number of Products") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # so category names fit in
 
-# Calculate number of purchases per customer
+# new variable customer_purchases = representing number of purchases per customer
 customer_purchases <- online_retail %>%
   count(CustomerID) %>%
   rename(PurchaseCount = n)
 
-# Apply log transformation for better visualization of large values
+# applying log fn, so we can look into distribution for larger values as well
 customer_purchases <- customer_purchases %>%
-  mutate(LogPurchaseCount = log1p(PurchaseCount))  # log1p is log(x + 1)
+  mutate(LogPurchaseCount = log1p(PurchaseCount))
 
-# Plot: Customer ID vs. Log(Number of Purchases)
+# visualizing distribution of customer purchases frequency Customer ID vs. log(# of purchases)
 ggplot(customer_purchases, aes(x = CustomerID, y = LogPurchaseCount)) +
-  geom_bar(stat = "identity", fill = "skyblue") +
-  labs(title = "Log Transformed Number of Purchases per Customer",
-       x = "Customer ID",
+  geom_bar(stat = "identity", fill = "salmon") +
+  labs(title = "Log of Number of Purchases per Customer",
+       x = "Customer IDs",
        y = "Log(Number of Purchases)") +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  theme(axis.text.x = element_blank()) # removing customer ids for privacy & better readability
 
-top_20_purchases_customers <- customer_purchases %>%
+
+top_50_purchases_customers <- customer_purchases %>%
   arrange(desc(PurchaseCount)) %>%
-  head(20)
+  head(50)
 
-# Plot top 20 customers
-ggplot(top_20_purchases_customers, aes(x = reorder(CustomerID, PurchaseCount), y = PurchaseCount)) +
+# plotting top 50 customers for looking more into outliers compared to stats summary
+ggplot(top_50_purchases_customers, aes(x = reorder(CustomerID, PurchaseCount), y = PurchaseCount)) +
   geom_bar(stat = "identity", fill = "skyblue") +
   labs(title = "Top 20 Customers by Number of Purchases",
        x = "Customer ID",
        y = "Number of Purchases") +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  theme(axis.text.x = element_blank())
 
-# Calculate the number of purchases per customer
-customer_purchases <- online_retail %>%
-  count(CustomerID) %>%
-  rename(PurchaseCount = n)
+summary(customer_purchases)
 
-summary(customer_purchases$PurchaseCount)
-
-# Looking into correlations between numerical variables
-numeric_data <- online_retail %>% 
+# quick check for correlations between numerical variables (not focus of bayesian), for extra exploration
+numeric_columns <- online_retail %>% 
   select(where(is.numeric))
 
 # ensuring missing values are removed pairwise
-cor_matrix <- cor(numeric_data, use = "complete.obs")
-corrplot(cor_matrix, method = "circle", type = "upper", tl.cex = 0.8)
+cor_matrix <- cor(numeric_columns, use = "complete.obs")
+corrplot(cor_matrix, type = "upper")
 
-
-# co-purchases by product category from EDA
-category_invoice_matrix <- online_retail %>%
+# co-purchases by product category from invoice info
+# creating binary matrix: InvoiceNo × ProductCategory
+invoice_category_matrix <- online_retail %>%
   select(InvoiceNo, ProductCategory) %>%
   distinct() %>%
   mutate(value = 1) %>%
   pivot_wider(names_from = ProductCategory, values_from = value, values_fill = 0)
 
-# co-occurrence matrix
-category_matrix <- as.matrix(category_invoice_matrix[,-1])
-category_co_occurrence <- t(category_matrix) %*% category_matrix
+# converting to matrix & compute co-occurrence
+category_matrix <- as.matrix(invoice_category_matrix[,-1])
 
-# heatmap
-pheatmap(category_co_occurrence,
-         cluster_rows = TRUE,
-         cluster_cols = TRUE,
-         main = "Co-Purchase Heatmap by Product Category")
+# cross-product to get category-category co-occur counts
+co_occurrence_matrix <- t(category_matrix) %% category_matrix
 
+# heatmap to look into co-purchases between categories
+pheatmap(co_occurrence_matrix, cluster_rows = TRUE, cluster_cols = TRUE,
+         main = "Product Categories Co-Purchase Frequency Heatmap",
+         color = colorRampPalette(c("white", "lightblue", "steelblue", "darkblue"))(100))
+
+# looking into basket sizes -  number of items per invoice
 basket_sizes <- online_retail %>%
   group_by(InvoiceNo) %>%
   summarise(basket_size = n())
 
 ggplot(basket_sizes, aes(x = basket_size)) +
-  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
-  scale_x_log10() + # Log scale to better visualize wide range of basket sizes
-  labs(
-    title = "Basket Size Distribution",
-    x = "Number of Items in Basket (log scale)",
-    y = "Frequency"
-  ) +
+  geom_histogram(fill = "salmon", color = "black") +
+  scale_x_log10() + # log scale since some basket size are outlining the visualization
+  labs(title = "Basket Size Distribution",
+       x = "Number of Items in Basket",
+       y = "Frequency") +
   theme_minimal()
